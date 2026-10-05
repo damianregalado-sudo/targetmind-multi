@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0a0a0a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>TargetMind Multi</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <header class="header">
+    <h1>⊕ TARGETMIND MULTI</h1>
+    <div>
+      <span class="pill" id="buildBadge">build 2026-10-05.01</span>
+    </div>
+  </header>
+
+  <nav class="nav">
+    <button class="nav-btn active" data-tab="targets">Blancos</button>
+    <button class="nav-btn" data-tab="drill">Drill</button>
+    <button class="nav-btn" data-tab="results">Resultados</button>
+  </nav>
+
+  <main>
+    <div id="tab-targets" class="tab-panel">
+      <div style="margin-bottom:12px">
+        <p style="font-size:13px;color:var(--muted)">Seleccioná 2 o más blancos, imprimilos y pegalos en la pared. La app detecta los marcadores ArUco de cada blanco automáticamente.</p>
+      </div>
+      <div id="targetCards"></div>
+      <div style="margin-top:16px">
+        <button class="btn btn-primary btn-lg" id="startDrillBtn" onclick="App.setTab('drill')">CONFIGURAR DRILL →</button>
+      </div>
+      <div style="margin-top:12px;text-align:center">
+        <button class="btn btn-ghost btn-sm" onclick="TargetDesign.downloadAll()">⬇ Descargar todos los blancos</button>
+      </div>
+    </div>
+
+    <div id="tab-drill" class="tab-panel hidden"></div>
+    <div id="tab-results" class="tab-panel hidden"></div>
+  </main>
+
+  <script src="vendor/aruco-cv.js"></script>
+  <script src="vendor/aruco.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/constants.js"></script>
+  <script src="js/target-design.js"></script>
+  <script src="js/aruco-detect.js"></script>
+  <script src="js/laser.js"></script>
+  <script src="js/vision-multi.js"></script>
+  <script src="js/drill-multi.js"></script>
+  <script src="js/app.js"></script>
+  <script async src="vendor/opencv.js" onload="window.__onOpenCvReady && window.__onOpenCvReady()"></script>
+
+</body>
+</html>
