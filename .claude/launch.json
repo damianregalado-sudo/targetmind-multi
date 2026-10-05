@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "targetmind-multi",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8091", "--directory", "/home/damian/Descargas/targetmind-multi"],
+      "port": 8091
+    }
+  ]
+}
