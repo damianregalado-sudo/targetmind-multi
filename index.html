@@ -14,7 +14,7 @@
 
   <header class="header">
     <h1>⊕ TARGETMIND MULTI</h1>
-    <span class="pill" id="buildBadge">build 2026-10-09.03</span>
+    <span class="pill" id="buildBadge">build 2026-10-09.04</span>
   </header>
 
   <nav class="nav">
@@ -26,11 +26,12 @@
   <main>
     <div id="tab-targets" class="tab-panel">
       <p class="muted-sm">Elegí los blancos, imprimilos en A4 al 100% y pegalos separados en la pared. Cada blanco se reconoce por sus 4 marcadores negros de las esquinas: no los tapes ni los recortes.</p>
+      <label class="toggle-row"><input type="checkbox" id="zonesToggle" checked> Mostrar zonas de puntaje en el blanco <span class="muted-sm">(ocultas = blanco realista; el puntaje es el mismo)</span></label>
       <div id="targetCards"></div>
       <p id="selectionHint" class="muted-sm"></p>
       <button class="btn btn-primary btn-lg" id="startDrillBtn" onclick="App.setTab('drill')">CONFIGURAR DRILL →</button>
       <div style="margin-top:12px;text-align:center">
-        <button class="btn btn-ghost btn-sm" onclick="TargetDesign.printTargets([1,2,3,4])">🖨 Imprimir los 4 blancos</button>
+        <button class="btn btn-ghost btn-sm" onclick="App.printSelected([1,2,3,4])">🖨 Imprimir los 4 blancos</button>
       </div>
     </div>
 

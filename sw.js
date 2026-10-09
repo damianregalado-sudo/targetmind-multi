@@ -1,12 +1,12 @@
 // Network-first for app files (redeploys show up on next load), cache as the
 // offline fallback. OpenCV.js is large and versioned, so it's cache-first.
-const CACHE = 'tm-multi-v3';
+const CACHE = 'tm-multi-v4';
 const SHELL = [
   './', './index.html', './manifest.json', './css/style.css',
   './vendor/aruco-cv.js', './vendor/aruco.js', './vendor/dictionaries/apriltag_16h5.js',
   './js/utils.js', './js/constants.js', './js/zones.js', './js/target-design.js',
   './js/aruco-detect.js', './js/laser.js', './js/vision-multi.js', './js/drill-multi.js', './js/app.js',
-  './icons/icon-192.png', './icons/icon-512.png', './art/ipsc-pistol.jpg',
+  './icons/icon-192.png', './icons/icon-512.png', './art/ipsc-pistol.jpg', './art/knife.jpg', './art/hostage.jpg', './art/civilian.jpg',
 ];
 
 self.addEventListener('install', (event) => {

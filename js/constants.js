@@ -37,25 +37,15 @@ const WARP_H = PAGE_H * WARP_SCALE;
 const PENALTY_POINTS = -10;
 const WRONG_TARGET_POINTS = -5;
 
-// IPSC-style silhouette, kept clear of the corner markers.
-const IPSC_OUTLINE = [[83, 42], [127, 42], [127, 88], [158, 96], [170, 118], [170, 232], [40, 232], [40, 118], [52, 96], [83, 88]];
-const IPSC_ZONES = [
-  { label: 'A', points: 5, shape: 'rect', x: 91, y: 50, w: 28, h: 22 },
-  { label: 'A', points: 5, shape: 'rect', x: 82, y: 104, w: 46, h: 78 },
-  { label: 'C', points: 3, shape: 'rect', x: 83, y: 42, w: 44, h: 46 },
-  { label: 'C', points: 3, shape: 'rect', x: 66, y: 96, w: 78, h: 118 },
-  { label: 'D', points: 1, shape: 'poly', pts: IPSC_OUTLINE },
-];
-
+// Each target is photo art placed on the page (mm) with zones on the figure's
+// anatomy (boxes measured on the art with Gemini, converted to page mm). Art
+// stays inside y ≤ 233 so the corner markers keep their white quiet zone.
 // Zones are tested in array order; the first one containing the hit wins, so
 // list inner/frontmost zones first.
-// Photo-art target: zones placed on the figure's anatomy (boxes measured on the
-// art with Gemini, then converted to page mm for the art's placement below).
 const PHOTO_PISTOL_D = [[77, 49], [109, 49], [111, 86], [124, 82], [147, 83], [147, 116], [139, 128], [139, 186], [66, 186], [58, 128], [58, 96], [76, 88]];
 const TARGET_TYPES = {
   1: {
     name: 'Atacante con pistola', color: '#e53935', noShoot: false,
-    figure: 'pistol',
     art: { src: 'art/ipsc-pistol.jpg', x: 46.2, y: 40, w: 117.7, h: 193 },
     zones: [
       { label: 'A', points: 5, shape: 'ellipse', cx: 94.2, cy: 77.4, rx: 11.7, ry: 13.3 },
@@ -67,24 +57,36 @@ const TARGET_TYPES = {
   },
   2: {
     name: 'Atacante con cuchillo', color: '#e53935', noShoot: false,
-    figure: 'knife', zones: IPSC_ZONES,
+    art: { src: 'art/knife.jpg', x: 40.1, y: 40, w: 129.8, h: 193 },
+    zones: [
+      { label: 'A', points: 5, shape: 'ellipse', cx: 109.4, cy: 77.2, rx: 12, ry: 10.1 },
+      { label: 'A', points: 5, shape: 'rect', x: 84.1, y: 84, w: 40, h: 78.9 },
+      { label: 'C', points: 3, shape: 'ellipse', cx: 109.4, cy: 71.9, rx: 16.4, ry: 26.1 },
+      { label: 'C', points: 3, shape: 'rect', x: 64.2, y: 84, w: 79.7, h: 105.4 },
+      { label: 'D', points: 1, shape: 'poly', pts: [[92, 45.8], [125.8, 45.8], [125.8, 78.6], [146.5, 86.3], [163.4, 117.2], [169.9, 159.7], [150.4, 189.6], [64.8, 189.6], [62.2, 121.1], [42.7, 113.3], [47.9, 63.2], [68.7, 53.5], [79, 82.5], [92, 78.6]] },
+    ],
   },
+  // The hostage is in front of the attacker, so her zones are tested first.
   3: {
     name: 'Rehén', color: '#f9a825', noShoot: false,
-    figure: 'hostage',
+    art: { src: 'art/hostage.jpg', x: 38.3, y: 40, w: 133.4, h: 193 },
     zones: [
-      { label: 'REHÉN', penalty: true, shape: 'ellipse', cx: 96, cy: 84, rx: 20, ry: 24 },
-      { label: 'REHÉN', penalty: true, shape: 'poly', pts: [[66, 110], [126, 110], [150, 132], [150, 232], [44, 232], [44, 132]] },
-      { label: 'A', points: 5, shape: 'circle', cx: 134, cy: 74, r: 13 },
-      { label: 'C', points: 3, shape: 'circle', cx: 134, cy: 74, r: 21 },
+      { label: 'REHÉN', penalty: true, shape: 'ellipse', cx: 103.6, cy: 72.2, rx: 18.5, ry: 24.3 },
+      { label: 'REHÉN', penalty: true, shape: 'poly', pts: [[58.3, 101.8], [89, 90.2], [118.3, 92.1], [138.4, 105.6], [138.4, 233], [58.3, 233]] },
+      { label: 'A', points: 5, shape: 'ellipse', cx: 130.4, cy: 89.8, rx: 9.4, ry: 10.2 },
+      { label: 'C', points: 3, shape: 'ellipse', cx: 133.7, cy: 83, rx: 13.2, ry: 21.2 },
+      { label: 'D', points: 1, shape: 'rect', x: 138.4, y: 91.1, w: 32, h: 74.2 },
     ],
   },
   4: {
     name: 'Civil inocente', color: '#43a047', noShoot: true,
-    figure: 'civilian',
+    art: { src: 'art/civilian.jpg', x: 40.3, y: 40, w: 129.5, h: 193 },
     zones: [
-      { label: 'CIVIL', penalty: true, shape: 'ellipse', cx: 105, cy: 72, rx: 20, ry: 24 },
-      { label: 'CIVIL', penalty: true, shape: 'poly', pts: IPSC_OUTLINE.slice(2) },
+      { label: 'CIVIL', penalty: true, shape: 'ellipse', cx: 105.5, cy: 78.3, rx: 13.8, ry: 20 },
+      { label: 'CIVIL', penalty: true, shape: 'rect', x: 75, y: 95, w: 56.2, h: 81.6 },
+      { label: 'CIVIL', penalty: true, shape: 'rect', x: 60.5, y: 97.9, w: 18.7, h: 50.2 },
+      { label: 'CIVIL', penalty: true, shape: 'rect', x: 129.7, y: 96, w: 18.1, h: 65.6 },
+      { label: 'CIVIL', penalty: true, shape: 'rect', x: 75.3, y: 176.6, w: 58.3, h: 56.4 },
     ],
   },
 };

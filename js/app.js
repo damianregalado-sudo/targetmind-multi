@@ -3,6 +3,16 @@ const App = (() => {
   let laserColor = 'red';
   let lastResults = null;
   let shotMarks = [];
+  let showZones = true;
+  try { showZones = localStorage.getItem('tm-show-zones') !== '0'; } catch (e) {}
+
+  function setShowZones(on) {
+    showZones = on;
+    try { localStorage.setItem('tm-show-zones', on ? '1' : '0'); } catch (e) {}
+    renderTargetsTab();
+  }
+
+  function printSelected(nums) { TargetDesign.printTargets(nums, { showZones }); }
 
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -43,7 +53,7 @@ const App = (() => {
           <span>${info.noShoot ? 'NO DISPARAR' : 'DISPARAR'}</span>
         </div>
         <div class="target-card-body">
-          <div class="target-preview">${TargetDesign.generateTargetSVG(i)}</div>
+          <div class="target-preview">${TargetDesign.generateTargetSVG(i, { showZones })}</div>
           <h3>${esc(info.name)}</h3>
           <div class="target-actions">
             <button class="btn btn-sm" data-act="toggle">${on ? '✓ Seleccionado' : 'Seleccionar'}</button>
@@ -51,9 +61,12 @@ const App = (() => {
           </div>
         </div>`;
       card.querySelector('[data-act="toggle"]').onclick = () => toggleTarget(i);
-      card.querySelector('[data-act="print"]').onclick = () => TargetDesign.printTargets([i]);
+      card.querySelector('[data-act="print"]').onclick = () => printSelected([i]);
       container.appendChild(card);
     }
+    const zt = $('#zonesToggle');
+    zt.checked = showZones;
+    zt.onchange = () => setShowZones(zt.checked);
     const problem = selectionProblem();
     $('#selectionHint').textContent = problem || `${selected.length} blancos seleccionados.`;
     $('#selectionHint').classList.toggle('warn', !!problem);
@@ -243,7 +256,7 @@ const App = (() => {
     $('#againBtn').onclick = () => setTab('drill');
   }
 
-  return { init, setTab };
+  return { init, setTab, printSelected };
 })();
 
 document.addEventListener('DOMContentLoaded', App.init);
