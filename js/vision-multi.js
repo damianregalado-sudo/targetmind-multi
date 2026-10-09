@@ -5,7 +5,7 @@ const VisionMulti = (() => {
   const LOCK_MIN_MARKERS = 3;
   const TRACK_MIN_MARKERS = 2;
   const SMOOTH_SNAP = 3;
-  const SHOT_GAP_FRAMES = 3;
+  const SHOT_GAP_FRAMES = 2;
   const SHOT_MIN_INTERVAL = 150;
   const LOCKED_DETECT_EVERY = 4;
   const ROI_SLACK = 6;
@@ -18,7 +18,22 @@ const VisionMulti = (() => {
   let tracks = {};
   let lockProgress = 0, prevCentroids = {};
   let frameNo = 0, markerCount = 0, fps = 0, lastLoopAt = 0;
-  let laserOn = false, laserGap = 0, lastShotAt = 0;
+  let laserState = {}, lastShotAt = 0;
+  let diag = { shake: 0, tooBig: 0, lastLogAt: 0 };
+  let shakeRate = 0;
+
+  // One callback per decoded camera frame when supported: no duplicate work
+  // on 60Hz displays and no silently skipped camera frames.
+  function schedule() {
+    if (videoEl && videoEl.requestVideoFrameCallback) rafId = { v: videoEl.requestVideoFrameCallback(loop) };
+    else rafId = { r: requestAnimationFrame(loop) };
+  }
+  function cancelSchedule() {
+    if (!rafId) return;
+    if (rafId.v != null && videoEl && videoEl.cancelVideoFrameCallback) videoEl.cancelVideoFrameCallback(rafId.v);
+    if (rafId.r != null) cancelAnimationFrame(rafId.r);
+    rafId = null;
+  }
 
   function setState(s) {
     if (s === state) return;
@@ -41,7 +56,7 @@ const VisionMulti = (() => {
   async function start(video) {
     videoEl = video;
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
       audio: false,
     });
     video.srcObject = stream;
@@ -52,12 +67,11 @@ const VisionMulti = (() => {
   }
 
   function stop() {
-    if (rafId) cancelAnimationFrame(rafId);
-    rafId = null;
+    cancelSchedule();
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     if (videoEl) videoEl.srcObject = null;
     tracks = {}; prevCentroids = {}; lockProgress = 0;
-    laserOn = false; laserGap = 0;
+    laserState = {};
     if (typeof cv !== 'undefined' && cv.Mat) Laser.reset();
     state = 'IDLE';
   }
@@ -69,18 +83,19 @@ const VisionMulti = (() => {
     laserColor = opts.laserColor || 'red';
     cbs = { onFrame: opts.onFrame, onState: opts.onState, onShot: opts.onShot };
     relock();
-    if (!rafId) loop();
+    if (!rafId) schedule();
   }
 
   function relock() {
     tracks = {}; prevCentroids = {}; lockProgress = 0;
+    laserState = {}; shakeRate = 0;
     Laser.reset();
     state = 'IDLE';
     setState('SEARCHING');
   }
 
   function loop() {
-    rafId = requestAnimationFrame(loop);
+    schedule();
     if (!videoEl || videoEl.readyState < 2) return;
     const w = videoEl.videoWidth, h = videoEl.videoHeight;
     if (!w || !h) return;
@@ -199,38 +214,52 @@ const VisionMulti = (() => {
     tr.roi = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
   }
 
+  // Edge-triggered per target: a dot fires once when it appears, then that
+  // target re-arms after a few dot-free frames. Per target so a stuck blob on
+  // one sheet can never block shots on the others.
   function processLasers(src) {
-    let hit = null;
+    const now = performance.now();
+    let shookThisFrame = false;
     for (const t of required) {
       const tr = tracks[t];
       if (!tr || !tr.H) continue;
       updateRoi(tr, src.cols, src.rows);
       if (!tr.roi) continue;
+      const ls = laserState[t] || (laserState[t] = { on: false, gap: 0 });
       const view = src.roi(new cv.Rect(tr.roi.x, tr.roi.y, tr.roi.width, tr.roi.height));
-      const d = Laser.detect(view, laserColor, t);
+      const dots = Laser.detect(view, laserColor, t);
       view.delete();
-      if (!d) continue;
-      const p = apply(tr.H, d.x + tr.roi.x, d.y + tr.roi.y);
-      const x = p.x / WARP_SCALE, y = p.y / WARP_SCALE;
-      if (x < 0 || y < 0 || x > PAGE_W || y > PAGE_H || Zones.inMarkerArea(x, y)) continue;
-      hit = { target: t, x, y };
-      break;
-    }
+      const info = Laser.last;
+      if (info.status === 'shake') { diag.shake++; shookThisFrame = true; }
+      else if (info.status === 'too-big') diag.tooBig++;
 
-    if (!hit) {
-      if (++laserGap >= SHOT_GAP_FRAMES) laserOn = false;
-      return;
+      let hit = null;
+      for (const d of dots) {
+        const p = apply(tr.H, d.x + tr.roi.x, d.y + tr.roi.y);
+        const x = p.x / WARP_SCALE, y = p.y / WARP_SCALE;
+        if (Zones.inArt(t, x, y) && !Zones.inMarkerArea(x, y)) { hit = { target: t, x, y, area: d.area }; break; }
+      }
+      if (!hit) {
+        if (++ls.gap >= SHOT_GAP_FRAMES) ls.on = false;
+        continue;
+      }
+      ls.gap = 0;
+      if (ls.on) continue;
+      ls.on = true;
+      if (now - lastShotAt < SHOT_MIN_INTERVAL) continue;
+      lastShotAt = now;
+      hit.at = now;
+      log('SHOT', `B${t} (${hit.x.toFixed(0)},${hit.y.toFixed(0)})mm área ${Math.round(hit.area)}px fps ${Math.round(fps)}`);
+      if (cbs.onShot) cbs.onShot(hit);
     }
-    laserGap = 0;
-    if (laserOn) return;
-    laserOn = true;
-    const now = performance.now();
-    if (now - lastShotAt < SHOT_MIN_INTERVAL) return;
-    lastShotAt = now;
-    hit.at = now;
-    if (typeof AppLog !== 'undefined') AppLog.add('SHOT', `B${hit.target} (${hit.x.toFixed(0)},${hit.y.toFixed(0)})mm`);
-    if (cbs.onShot) cbs.onShot(hit);
+    shakeRate = shakeRate * 0.95 + (shookThisFrame ? 0.05 : 0);
+    if (now - diag.lastLogAt > 2000 && (diag.shake || diag.tooBig)) {
+      log('LASER', `últimos 2s: ${diag.shake} frames con movimiento de cámara, ${diag.tooBig} manchas grandes descartadas · fps ${Math.round(fps)}`);
+      diag.shake = 0; diag.tooBig = 0; diag.lastLogAt = now;
+    }
   }
+
+  function log(tag, msg) { if (typeof AppLog !== 'undefined') AppLog.add(tag, msg); }
 
   function frameInfo(w, h) {
     const targets = {};
@@ -239,7 +268,7 @@ const VisionMulti = (() => {
       const c = tr && tr.Hinv ? mmToFrame(t, PAGE_W / 2, PAGE_H / 2) : null;
       targets[t] = { markers: tr ? tr.seen.length : 0, fx: c ? c.x / w : null, fy: c ? c.y / h : null };
     }
-    return { state, targets, progress: Math.min(1, lockProgress / LOCK_FRAMES), markerCount, fps, frameW: w, frameH: h };
+    return { state, targets, progress: Math.min(1, lockProgress / LOCK_FRAMES), markerCount, fps, unstable: shakeRate > 0.3, frameW: w, frameH: h };
   }
 
   return {

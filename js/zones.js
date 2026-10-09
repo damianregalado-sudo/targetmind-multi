@@ -27,6 +27,13 @@ const Zones = (() => {
     return null;
   }
 
+  // Only the art is a valid hit area; the margins hold the coloured target
+  // number and labels, whose edges would flicker as "dots" on a shaky phone.
+  function inArt(targetNum, x, y) {
+    const a = TARGET_TYPES[targetNum].art;
+    return x >= a.x && x <= a.x + a.w && y >= a.y && y <= a.y + a.h;
+  }
+
   function inMarkerArea(x, y) {
     const pad = MARKER_CLEARANCE;
     return MARKER_ORIGINS.some(o => x >= o.x - pad && x <= o.x + MARKER_MM + pad && y >= o.y - pad && y <= o.y + MARKER_MM + pad);
@@ -56,5 +63,5 @@ const Zones = (() => {
     return { x: 0, y: 0 };
   }
 
-  return { hitTest, contains, inMarkerArea, zoneSVG, labelPos };
+  return { hitTest, contains, inArt, inMarkerArea, zoneSVG, labelPos };
 })();

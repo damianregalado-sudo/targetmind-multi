@@ -1,6 +1,6 @@
 // Network-first for app files (redeploys show up on next load), cache as the
 // offline fallback. OpenCV.js is large and versioned, so it's cache-first.
-const CACHE = 'tm-multi-v4';
+const CACHE = 'tm-multi-v5';
 const SHELL = [
   './', './index.html', './manifest.json', './css/style.css',
   './vendor/aruco-cv.js', './vendor/aruco.js', './vendor/dictionaries/apriltag_16h5.js',

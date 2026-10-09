@@ -68,8 +68,9 @@ const DrillMulti = (() => {
     later(nextRound, randDelay());
   }
 
+  // Returns 'early' when a scoring hit landed before the call-out (not counted).
   function registerShot(shot) {
-    if (state !== 'AWAIT' && state !== 'BETWEEN') return;
+    if (state !== 'AWAIT' && state !== 'BETWEEN' && state !== 'READY') return;
     const def = TARGET_TYPES[shot.target];
     const hit = Zones.hitTest(shot.target, shot.x, shot.y);
     const time = state === 'AWAIT' ? Math.round(shot.at - roundStart) : null;
@@ -80,7 +81,7 @@ const DrillMulti = (() => {
       notify({ type: 'penalty' });
       return;
     }
-    if (state !== 'AWAIT') return;
+    if (state !== 'AWAIT') return 'early';
     if (shot.target !== seq[idx]) {
       events.push({ ...base, kind: 'wrong', label: `BLANCO ${shot.target}`, points: WRONG_TARGET_POINTS });
       notify({ type: 'wrong' });

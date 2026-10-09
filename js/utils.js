@@ -55,7 +55,7 @@ const AppLog = (() => {
     }
     try {
       await navigator.clipboard.writeText(text);
-      Toast.show('Log copiado al portapapeles', 'success');
+      alert('Diagnóstico copiado al portapapeles');
     } catch (_) {
       const w = window.open('', '_blank');
       if (w) { w.document.write('<pre>' + text.replace(/</g, '&lt;') + '</pre>'); }

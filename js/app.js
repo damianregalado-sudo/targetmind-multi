@@ -113,7 +113,10 @@ const App = (() => {
           <button class="btn btn-ghost" id="backBtn">← Volver</button>
           <button class="btn btn-primary" id="drillActionBtn" disabled>INICIAR DRILL</button>
         </div>
+        <p class="muted-sm">Sin drill en curso, cada impacto muestra su zona: sirve para probar la detección.
+          <button class="btn btn-ghost btn-sm" id="diagBtn">Compartir diagnóstico</button></p>
       </div>`;
+    $('#diagBtn').onclick = () => AppLog.share();
     $('#camBtn').onclick = startCamera;
     $('#backBtn').onclick = () => { stopCamera(); renderDrillTab(); };
     $('#drillActionBtn').onclick = toggleDrill;
@@ -166,7 +169,16 @@ const App = (() => {
 
   function onShot(shot) {
     shotMarks.push({ ...shot, until: performance.now() + 1500 });
-    DrillMulti.registerShot(shot);
+    const st = DrillMulti.state;
+    if (st === 'AWAIT' || st === 'BETWEEN' || st === 'READY') {
+      if (DrillMulti.registerShot(shot) === 'early') {
+        $('#drillMsg').innerHTML = `<div class="drill-hit miss">Impacto en blanco ${shot.target} antes de la orden · no cuenta</div>`;
+      }
+      return;
+    }
+    // no drill running: free practice, just report where it landed
+    const h = Zones.hitTest(shot.target, shot.x, shot.y);
+    $('#drillMsg').innerHTML = `<div class="drill-hit ${h && h.penalty ? 'penalty' : h ? '' : 'miss'}">Blanco ${shot.target}: ${h ? `${esc(h.label)} · ${h.points} pts` : 'fuera de zona'}</div>`;
   }
 
   function onVisionFrame(f) {
@@ -196,8 +208,9 @@ const App = (() => {
         : `Estabilizando… ${Math.round(f.progress * 100)}%`;
     } else if (f.state === 'LOCKED') {
       const weak = Object.entries(f.targets).filter(([, i]) => i.markers < 2).map(([t]) => t);
-      status.className = 'hud-status locked';
-      status.textContent = (weak.length ? `Fijado ✓ (sin ver ahora: blanco ${weak.join(', ')})` : `${Object.keys(f.targets).length} blancos fijados ✓`) + ` · ${Math.round(f.fps)} fps`;
+      status.className = f.unstable ? 'hud-status warn' : 'hud-status locked';
+      if (f.unstable) { status.textContent = '⚠ La cámara se mueve: apoyá el teléfono firme (los impactos pueden no registrarse)'; }
+      else status.textContent = (weak.length ? `Fijado ✓ (sin ver ahora: blanco ${weak.join(', ')})` : `${Object.keys(f.targets).length} blancos fijados ✓`) + ` · ${Math.round(f.fps)} fps`;
     }
     const btn = $('#drillActionBtn');
     if (btn && DrillMulti.state === 'IDLE') btn.disabled = f.state !== 'LOCKED';
