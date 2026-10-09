@@ -107,10 +107,19 @@ select.input-sm { width: 100px; }
 .drill-config { display: flex; flex-direction: column; gap: 10px; }
 .drill-config label { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
 
-#drillCamera { position: relative; }
-#drillVideo { display: none; }
-#drillPreview { width: 100%; border-radius: var(--radius); }
-.drill-overlay { position: absolute; top: 0; left: 0; width: 100%; height: calc(100% - 60px); pointer-events: none; }
+.cam-wrap { position: relative; border-radius: var(--radius); overflow: hidden; background: #000; }
+#drillVideo { display: block; width: 100%; height: auto; }
+.drill-overlay { position: absolute; inset: 0; pointer-events: none; }
+.target-marker.dim { opacity: 0.4; }
+.shot-mark {
+  position: absolute; width: 18px; height: 18px; border-radius: 50%;
+  border: 3px solid #fff; background: rgba(255,0,0,0.6); transform: translate(-50%, -50%);
+}
+.muted-sm { font-size: 13px; color: var(--muted); margin: 8px 0 12px; }
+.warn { color: var(--warning); }
+.drill-msg { text-align: center; padding: 8px 12px; min-height: 92px; }
+.drill-sub { font-size: 14px; color: var(--muted); }
+.drill-hit.miss { color: var(--muted); }
 .target-marker {
   position: absolute;
   width: 40px; height: 40px;

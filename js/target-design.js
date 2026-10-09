@@ -1,153 +1,103 @@
 const TargetDesign = (() => {
-  const A4_W = 210, A4_H = 297;
-  const MARKER_SIZE = 30;
-  const MARKER_INSET = 12;
-  const MARKER_GRID = 7;
+  let dict = null;
+  function dictionary() { return dict || (dict = new AR.Dictionary(MARKER_DICT)); }
 
-  const ARUCO_CODES = AR.DICTIONARIES.ARUCO.codeList;
-
-  function markerBits(id) {
-    const code = ARUCO_CODES[id];
-    const bits = [];
-    for (let i = 24; i >= 0; i--) bits.push((code >> i) & 1);
-    const grid = [];
-    for (let r = 0; r < 5; r++) grid.push(bits.slice(r * 5, r * 5 + 5));
-    return grid;
-  }
-
-  function renderMarkerSVG(id, x, y, size) {
-    const cell = size / MARKER_GRID;
-    const bits = markerBits(id);
-    let svg = `<rect x="${x}" y="${y}" width="${size}" height="${size}" fill="black"/>`;
-    for (let r = 0; r < 5; r++) {
-      for (let c = 0; c < 5; c++) {
-        if (bits[r][c]) {
-          svg += `<rect x="${x + (c + 1) * cell}" y="${y + (r + 1) * cell}" width="${cell}" height="${cell}" fill="white"/>`;
+  function markerSVG(id, x, y, s) {
+    const code = dictionary().codeList[id];
+    const n = Math.sqrt(code.length);
+    const cell = s / (n + 2);
+    let svg = `<rect x="${x - MARKER_CLEARANCE}" y="${y - MARKER_CLEARANCE}" width="${s + 2 * MARKER_CLEARANCE}" height="${s + 2 * MARKER_CLEARANCE}" fill="white"/>`;
+    svg += `<rect x="${x}" y="${y}" width="${s}" height="${s}" fill="black"/>`;
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        if (code[r * n + c] === '1') {
+          // slight overlap avoids hairline seams between adjacent white cells
+          svg += `<rect x="${x + (c + 1) * cell}" y="${y + (r + 1) * cell}" width="${cell + 0.05}" height="${cell + 0.05}" fill="white"/>`;
         }
       }
     }
     return svg;
   }
 
-  const SILHOUETTES = {
-    pistol: `<g transform="translate(105,70)">
-      <ellipse cx="0" cy="0" rx="18" ry="22" fill="#1a1a1a"/>
-      <rect x="-22" y="22" width="44" height="80" rx="8" fill="#1a1a1a"/>
-      <rect x="-18" y="102" width="16" height="70" rx="4" fill="#1a1a1a"/>
-      <rect x="2" y="102" width="16" height="70" rx="4" fill="#1a1a1a"/>
-      <rect x="22" y="40" width="60" height="10" rx="3" fill="#1a1a1a"/>
-      <rect x="75" y="36" width="22" height="8" rx="2" fill="#333"/>
-      <rect x="-40" y="36" width="20" height="10" rx="3" fill="#1a1a1a"/>
-    </g>`,
-    knife: `<g transform="translate(105,70)">
-      <ellipse cx="0" cy="0" rx="18" ry="22" fill="#1a1a1a"/>
-      <rect x="-22" y="22" width="44" height="80" rx="8" fill="#1a1a1a"/>
-      <rect x="-18" y="102" width="16" height="70" rx="4" fill="#1a1a1a"/>
-      <rect x="2" y="102" width="16" height="70" rx="4" fill="#1a1a1a"/>
-      <rect x="18" y="10" width="10" height="40" rx="3" fill="#1a1a1a" transform="rotate(-30,23,30)"/>
-      <rect x="20" y="-25" width="6" height="35" rx="1" fill="#666" transform="rotate(-30,23,30)"/>
-      <rect x="-40" y="50" width="20" height="10" rx="3" fill="#1a1a1a"/>
-    </g>`,
-    hostage: `<g transform="translate(105,70)">
-      <ellipse cx="12" cy="0" rx="18" ry="22" fill="#1a1a1a"/>
-      <rect x="-10" y="22" width="44" height="80" rx="8" fill="#1a1a1a"/>
-      <rect x="-6" y="102" width="16" height="70" rx="4" fill="#1a1a1a"/>
-      <rect x="14" y="102" width="16" height="70" rx="4" fill="#1a1a1a"/>
-      <ellipse cx="-12" cy="5" rx="16" ry="20" fill="#888" stroke="#444" stroke-width="1"/>
-      <rect x="-30" y="25" width="40" height="75" rx="8" fill="#aaa" stroke="#888" stroke-width="1"/>
-      <rect x="-26" y="100" width="14" height="65" rx="4" fill="#aaa"/>
-      <rect x="-10" y="100" width="14" height="65" rx="4" fill="#aaa"/>
-      <line x1="-28" y1="35" x2="-28" y2="5" stroke="#aaa" stroke-width="6" stroke-linecap="round"/>
-      <line x1="8" y1="35" x2="8" y2="5" stroke="#aaa" stroke-width="6" stroke-linecap="round"/>
-    </g>`,
-    civilian: `<g transform="translate(105,70)">
-      <ellipse cx="0" cy="0" rx="18" ry="22" fill="#1a1a1a"/>
-      <rect x="-22" y="22" width="44" height="80" rx="8" fill="#1a1a1a"/>
-      <rect x="-18" y="102" width="16" height="70" rx="4" fill="#1a1a1a"/>
-      <rect x="2" y="102" width="16" height="70" rx="4" fill="#1a1a1a"/>
-      <line x1="-22" y1="40" x2="-35" y2="-15" stroke="#1a1a1a" stroke-width="10" stroke-linecap="round"/>
-      <line x1="22" y1="40" x2="35" y2="-15" stroke="#1a1a1a" stroke-width="10" stroke-linecap="round"/>
-      <circle cx="-38" cy="-20" r="8" fill="none" stroke="#1a1a1a" stroke-width="3"/>
-      <circle cx="38" cy="-20" r="8" fill="none" stroke="#1a1a1a" stroke-width="3"/>
-    </g>`,
+  const TAN = '#d9c4a0', TAN_STROKE = '#8d6e4a';
+  const pts = p => p.map(q => q.join(',')).join(' ');
+
+  const PISTOL = `<g fill="#3a3a3a"><rect x="138" y="122" width="30" height="8" rx="1"/><rect x="140" y="128" width="8" height="14" rx="1.5" transform="rotate(12,144,128)"/></g>`;
+  const KNIFE = `<g><polygon points="140,128 168,112 170,115 146,134" fill="#9e9e9e" stroke="#555" stroke-width="0.4"/><rect x="132" y="128" width="12" height="6" rx="1.5" fill="#3a3a3a" transform="rotate(-30,138,131)"/></g>`;
+
+  const FIGURES = {
+    pistol: () => `<polygon points="${pts(IPSC_OUTLINE)}" fill="${TAN}" stroke="${TAN_STROKE}" stroke-width="0.8"/>${PISTOL}`,
+    knife: () => `<polygon points="${pts(IPSC_OUTLINE)}" fill="${TAN}" stroke="${TAN_STROKE}" stroke-width="0.8"/>${KNIFE}`,
+    hostage: () => {
+      const z = TARGET_TYPES[3].zones;
+      return `<circle cx="134" cy="74" r="22" fill="${TAN}" stroke="${TAN_STROKE}" stroke-width="0.8"/>
+        <polygon points="120,100 160,104 166,130 166,200 150,200 150,132" fill="${TAN}" stroke="${TAN_STROKE}" stroke-width="0.8"/>
+        <polygon points="${pts(z[1].pts)}" fill="#e3e9ec" stroke="#607d8b" stroke-width="0.8"/>
+        <ellipse cx="96" cy="84" rx="20" ry="24" fill="#e3e9ec" stroke="#607d8b" stroke-width="0.8"/>
+        <g fill="#3a3a3a"><rect x="112" y="92" width="22" height="7" rx="1"/><rect x="128" y="96" width="7" height="12" rx="1.5"/></g>`;
+    },
+    civilian: () => `<polygon points="${pts(IPSC_OUTLINE.slice(2))}" fill="#dcedc8" stroke="#2e7d32" stroke-width="0.8"/>
+      <ellipse cx="105" cy="72" rx="20" ry="24" fill="#dcedc8" stroke="#2e7d32" stroke-width="0.8"/>
+      <g stroke="#2e7d32" stroke-width="5" stroke-linecap="round" fill="none"><line x1="58" y1="104" x2="70" y2="74"/><line x1="152" y1="104" x2="140" y2="74"/></g>
+      <circle cx="70" cy="70" r="6" fill="#dcedc8" stroke="#2e7d32" stroke-width="0.8"/><circle cx="140" cy="70" r="6" fill="#dcedc8" stroke="#2e7d32" stroke-width="0.8"/>`,
   };
 
-  const ZONE_OVERLAYS = {
-    shoot: `
-      <rect x="42" y="48" width="126" height="156" rx="6" fill="none" stroke="#e53935" stroke-width="0.8" stroke-dasharray="3,2" opacity="0.6"/>
-      <text x="105" y="230" text-anchor="middle" fill="#e53935" font-size="6" opacity="0.5">D</text>
-      <rect x="58" y="60" width="94" height="120" rx="4" fill="none" stroke="#ff9800" stroke-width="0.8" stroke-dasharray="3,2" opacity="0.6"/>
-      <text x="105" y="195" text-anchor="middle" fill="#ff9800" font-size="6" opacity="0.5">C</text>
-      <rect x="72" y="82" width="66" height="60" rx="3" fill="none" stroke="#4caf50" stroke-width="1" opacity="0.7"/>
-      <text x="105" y="148" text-anchor="middle" fill="#4caf50" font-size="5" font-weight="bold" opacity="0.7">A</text>
-      <ellipse cx="105" cy="68" rx="22" ry="18" fill="none" stroke="#2196f3" stroke-width="1" opacity="0.7"/>
-      <text x="105" y="56" text-anchor="middle" fill="#2196f3" font-size="5" font-weight="bold" opacity="0.7">A</text>
-    `,
-    'shoot-head': `
-      <ellipse cx="117" cy="73" rx="22" ry="20" fill="none" stroke="#f44336" stroke-width="1.5" opacity="0.8"/>
-      <text x="117" y="58" text-anchor="middle" fill="#f44336" font-size="6" font-weight="bold" opacity="0.8">ZONA VÁLIDA</text>
-      <text x="105" y="230" text-anchor="middle" fill="#f44336" font-size="7" opacity="0.5">NO DISPARAR AL REHÉN</text>
-    `,
-    'no-shoot': `
-      <line x1="40" y1="40" x2="170" y2="210" stroke="#43a047" stroke-width="3" opacity="0.4"/>
-      <line x1="170" y1="40" x2="40" y2="210" stroke="#43a047" stroke-width="3" opacity="0.4"/>
-      <text x="105" y="235" text-anchor="middle" fill="#43a047" font-size="8" font-weight="bold" opacity="0.7">NO DISPARAR</text>
-    `,
-  };
-
-  function generateTargetSVG(targetNum) {
-    const info = TARGET_TYPES[targetNum];
-    if (!info) return null;
-    const markers = MARKER_ASSIGNMENTS[targetNum];
-    const ms = MARKER_SIZE;
-    const mi = MARKER_INSET;
-
-    const positions = [
-      { id: markers[0], x: mi, y: mi },
-      { id: markers[1], x: A4_W - mi - ms, y: mi },
-      { id: markers[2], x: A4_W - mi - ms, y: A4_H - mi - ms },
-      { id: markers[3], x: mi, y: A4_H - mi - ms },
-    ];
-
-    let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${A4_W} ${A4_H}" width="${A4_W}mm" height="${A4_H}mm">`;
-    svg += `<rect width="${A4_W}" height="${A4_H}" fill="white"/>`;
-    svg += `<rect x="2" y="2" width="${A4_W - 4}" height="${A4_H - 4}" fill="none" stroke="${info.color}" stroke-width="3" rx="4"/>`;
-
-    for (const p of positions) svg += renderMarkerSVG(p.id, p.x, p.y, ms);
-
-    svg += `<text x="${A4_W / 2}" y="32" text-anchor="middle" font-family="Impact,sans-serif" font-size="28" fill="${info.color}" font-weight="bold">${targetNum}</text>`;
-
-    svg += `<g transform="translate(0,28)">`;
-    svg += SILHOUETTES[info.icon];
-    svg += ZONE_OVERLAYS[info.type];
-    svg += `</g>`;
-
-    svg += `<text x="${A4_W / 2}" y="${A4_H - 18}" text-anchor="middle" font-family="Arial,sans-serif" font-size="7" fill="#333">${info.name.toUpperCase()}</text>`;
-    svg += `<text x="${A4_W / 2}" y="${A4_H - 10}" text-anchor="middle" font-family="Arial,sans-serif" font-size="5" fill="#999">TARGETMIND MULTI</text>`;
-
-    if (info.type === 'no-shoot') {
-      svg += `<text x="${A4_W / 2}" y="${A4_H - 50}" text-anchor="middle" font-family="Impact,sans-serif" font-size="14" fill="${info.color}" opacity="0.8">⚠ CIVIL - NO DISPARAR ⚠</text>`;
+  function zonesSVG(def) {
+    let svg = '';
+    for (const z of def.zones) {
+      if (z.penalty) continue;
+      if (z.label === 'D') continue;
+      svg += Zones.zoneSVG(z, '#6d4c41', 0.5, '2,1.2');
+      const p = Zones.labelPos(z);
+      svg += `<text x="${p.x}" y="${p.y}" text-anchor="middle" font-family="Arial,sans-serif" font-size="4.5" font-weight="bold" fill="#6d4c41" opacity="0.8">${z.label}</text>`;
     }
+    return svg;
+  }
 
+  // opts.art: { href, x, y, w, h } — optional background artwork (mm). Markers
+  // and their white quiet zone are always drawn on top so art can't break detection.
+  function generateTargetSVG(targetNum, opts = {}) {
+    const def = TARGET_TYPES[targetNum];
+    if (!def) return null;
+    let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${PAGE_W} ${PAGE_H}" width="${PAGE_W}mm" height="${PAGE_H}mm">`;
+    svg += `<rect width="${PAGE_W}" height="${PAGE_H}" fill="white"/>`;
+    const art = opts.art || def.art;
+    if (art) svg += `<image href="${art.href}" x="${art.x}" y="${art.y}" width="${art.w}" height="${art.h}" preserveAspectRatio="xMidYMid slice"/>`;
+    else svg += FIGURES[def.figure]();
+    svg += zonesSVG(def);
+    for (let k = 0; k < 4; k++) {
+      const o = MARKER_ORIGINS[k];
+      svg += markerSVG(markerIdFor(targetNum, k), o.x, o.y, MARKER_MM);
+    }
+    svg += `<text x="${PAGE_W / 2}" y="30" text-anchor="middle" font-family="Impact,Arial Black,sans-serif" font-size="22" fill="${def.color}">${targetNum}</text>`;
+    svg += `<text x="${PAGE_W / 2}" y="${PAGE_H - 22}" text-anchor="middle" font-family="Arial,sans-serif" font-size="5" font-weight="bold" fill="${def.noShoot ? '#2e7d32' : '#333'}">${def.noShoot ? 'NO DISPARAR · ' : ''}${def.name.toUpperCase()}</text>`;
+    svg += `<text x="${PAGE_W / 2}" y="${PAGE_H - 14}" text-anchor="middle" font-family="Arial,sans-serif" font-size="4" fill="#999">TARGETMIND MULTI · imprimir al 100% en A4</text>`;
     svg += `</svg>`;
     return svg;
+  }
+
+  function printTargets(nums) {
+    const pages = nums.map(n => `<div class="page">${generateTargetSVG(n)}</div>`).join('');
+    const w = window.open('', '_blank');
+    if (!w) { alert('Permití ventanas emergentes para imprimir los blancos.'); return; }
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Blancos TargetMind Multi</title>
+      <style>@page{size:A4 portrait;margin:0}html,body{margin:0;padding:0}.page{width:210mm;height:297mm;page-break-after:always;overflow:hidden}.page svg{width:210mm;height:297mm;display:block}</style>
+      </head><body>${pages}<script>window.onload=()=>setTimeout(()=>window.print(),300)<\/script></body></html>`);
+    w.document.close();
   }
 
   function downloadTarget(targetNum) {
     const svg = generateTargetSVG(targetNum);
     if (!svg) return;
-    const blob = new Blob([svg], { type: 'image/svg+xml' });
-    const url = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
     const a = document.createElement('a');
     a.href = url;
     a.download = `targetmind-multi-blanco-${targetNum}.svg`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
   }
 
-  function downloadAll() {
-    for (let i = 1; i <= TARGETS_MAX; i++) downloadTarget(i);
-  }
-
-  return { generateTargetSVG, downloadTarget, downloadAll };
+  return { generateTargetSVG, printTargets, downloadTarget };
 })();

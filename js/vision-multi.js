@@ -1,201 +1,249 @@
 const VisionMulti = (() => {
-  let stream = null, videoEl = null;
+  const DETECT_W = 720;
+  const LOCK_FRAMES = 6;
+  const LOCK_JITTER = 8;
+  const LOCK_MIN_MARKERS = 3;
+  const TRACK_MIN_MARKERS = 2;
+  const SMOOTH_SNAP = 3;
+  const SHOT_GAP_FRAMES = 3;
+  const SHOT_MIN_INTERVAL = 150;
+  const LOCKED_DETECT_EVERY = 4;
+  const ROI_SLACK = 6;
+
+  let stream = null, videoEl = null, rafId = null;
   let state = 'IDLE';
-  let rafId = null;
-  let onFrameCb = null, onStateCb = null;
-  let detectedTargets = {};
-  let activeTarget = null;
-  let warpCanvases = {};
-  let stableCount = 0;
-  let lastCorners = {};
-  const STABLE_FRAMES = 4;
-  const JITTER_TOL = 20;
+  let frameCanvas = null, frameCtx = null;
+  let required = [], laserColor = 'red';
+  let cbs = {};
+  let tracks = {};
+  let lockProgress = 0, prevCentroids = {};
+  let frameNo = 0, markerCount = 0, fps = 0, lastLoopAt = 0;
+  let laserOn = false, laserGap = 0, lastShotAt = 0;
 
-  let searchCanvas = null, searchCtx = null;
+  function setState(s) {
+    if (s === state) return;
+    state = s;
+    if (typeof AppLog !== 'undefined') AppLog.add('VISION', s);
+    if (cbs.onState) cbs.onState(s);
+  }
 
-  function setState(s) { state = s; if (onStateCb) onStateCb(s); }
+  function ready(timeoutMs = 30000) {
+    return new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      (function poll() {
+        if (typeof cv !== 'undefined' && cv.Mat && cv.findHomography) return resolve();
+        if (Date.now() - t0 > timeoutMs) return reject(new Error('El motor de visión (OpenCV) no terminó de cargar.'));
+        setTimeout(poll, 200);
+      })();
+    });
+  }
 
   async function start(video) {
     videoEl = video;
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
       audio: false,
     });
     video.srcObject = stream;
     await video.play();
-    searchCanvas = document.createElement('canvas');
-    searchCtx = searchCanvas.getContext('2d', { willReadFrequently: true });
-    for (let i = 1; i <= TARGETS_MAX; i++) {
-      const c = document.createElement('canvas');
-      c.width = WARP_SIZE; c.height = WARP_SIZE;
-      warpCanvases[i] = c;
-    }
-    if (typeof AppLog !== 'undefined') AppLog.add('CAM', 'Cámara iniciada');
-    startPreview();
-  }
-
-  let previewRaf = null;
-  function startPreview() {
-    function step() {
-      previewRaf = requestAnimationFrame(step);
-      if (!videoEl || videoEl.readyState < 2) return;
-      const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
-      if (!vw) return;
-      const sw = 640, sh = Math.round(640 * vh / vw);
-      searchCanvas.width = sw; searchCanvas.height = sh;
-      searchCtx.drawImage(videoEl, 0, 0, sw, sh);
-      if (onFrameCb && state === 'IDLE') {
-        onFrameCb({ state: 'IDLE', previewCanvas: searchCanvas, targets: {} });
-      }
-    }
-    if (previewRaf) cancelAnimationFrame(previewRaf);
-    step();
+    frameCanvas = document.createElement('canvas');
+    frameCtx = frameCanvas.getContext('2d', { willReadFrequently: true });
+    if (typeof AppLog !== 'undefined') AppLog.add('CAM', `Cámara ${video.videoWidth}x${video.videoHeight}`);
   }
 
   function stop() {
     if (rafId) cancelAnimationFrame(rafId);
-    if (previewRaf) cancelAnimationFrame(previewRaf);
-    rafId = null; previewRaf = null;
+    rafId = null;
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-    state = 'IDLE'; detectedTargets = {}; activeTarget = null;
-    stableCount = 0; lastCorners = {};
+    if (videoEl) videoEl.srcObject = null;
+    tracks = {}; prevCentroids = {}; lockProgress = 0;
+    laserOn = false; laserGap = 0;
+    if (typeof cv !== 'undefined' && cv.Mat) Laser.reset();
+    state = 'IDLE';
   }
 
-  function cornersStable(prev, curr) {
-    if (!prev || !curr) return false;
-    for (let i = 0; i < 4; i++) {
-      if (Math.hypot(prev[i].x - curr[i].x, prev[i].y - curr[i].y) > JITTER_TOL) return false;
-    }
-    return true;
+  function isRunning() { return !!stream; }
+
+  function track(targets, opts) {
+    required = targets.slice();
+    laserColor = opts.laserColor || 'red';
+    cbs = { onFrame: opts.onFrame, onState: opts.onState, onShot: opts.onShot };
+    relock();
+    if (!rafId) loop();
   }
-
-  function frameLoop() {
-    if (previewRaf) { cancelAnimationFrame(previewRaf); previewRaf = null; }
-    rafId = requestAnimationFrame(frameLoop);
-    if (!videoEl || videoEl.readyState < 2) return;
-
-    const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
-    if (!vw) return;
-    const sw = 640, sh = Math.round(640 * vh / vw);
-    searchCanvas.width = sw; searchCanvas.height = sh;
-    searchCtx.drawImage(videoEl, 0, 0, sw, sh);
-
-    const imageData = searchCtx.getImageData(0, 0, sw, sh);
-    const markers = ArucoDetect.detect(imageData.data, sw, sh);
-    const groups = ArucoDetect.groupByTarget(markers);
-
-    const targetsFound = {};
-    let fullTargets = 0;
-    for (const [tNum, group] of Object.entries(groups)) {
-      const corners = ArucoDetect.getTargetCorners(group);
-      if (corners) {
-        targetsFound[tNum] = { corners, markers: group };
-        fullTargets++;
-      }
-    }
-
-    detectedTargets = targetsFound;
-
-    if (state === 'SEARCHING') {
-      let allStable = true;
-      for (const [tNum, t] of Object.entries(targetsFound)) {
-        if (!lastCorners[tNum] || !cornersStable(lastCorners[tNum], t.corners)) {
-          allStable = false;
-        }
-        lastCorners[tNum] = t.corners;
-      }
-
-      if (fullTargets >= 2 && allStable) {
-        stableCount++;
-      } else {
-        stableCount = Math.max(0, stableCount - 1);
-      }
-
-      if (stableCount >= STABLE_FRAMES && fullTargets >= 2) {
-        warpAllTargets(vw, vh, sw, sh);
-        setState('LOCKED');
-        if (typeof AppLog !== 'undefined') AppLog.add('LOCK', `${fullTargets} blancos lockeados`);
-      }
-
-      if (onFrameCb) onFrameCb({
-        state: 'SEARCHING',
-        previewCanvas: searchCanvas,
-        targets: targetsFound,
-        progress: stableCount / STABLE_FRAMES,
-        markerCount: markers.length,
-      });
-      return;
-    }
-
-    if (state === 'LOCKED') {
-      for (const [tNum, t] of Object.entries(targetsFound)) {
-        lastCorners[tNum] = t.corners;
-      }
-      warpAllTargets(vw, vh, sw, sh);
-
-      if (onFrameCb) onFrameCb({
-        state: 'LOCKED',
-        targets: targetsFound,
-        warpCanvases,
-        activeTarget,
-        previewCanvas: searchCanvas,
-      });
-    }
-  }
-
-  function warpAllTargets(vw, vh, sw, sh) {
-    const scaleX = vw / sw, scaleY = vh / sh;
-    const fullCanvas = document.createElement('canvas');
-    fullCanvas.width = vw; fullCanvas.height = vh;
-    const fullCtx = fullCanvas.getContext('2d');
-    fullCtx.drawImage(videoEl, 0, 0, vw, vh);
-
-    for (const [tNum, t] of Object.entries(detectedTargets)) {
-      const canvas = warpCanvases[tNum];
-      if (!canvas) continue;
-      const ctx = canvas.getContext('2d');
-      const scaled = t.corners.map(c => ({ x: c.x * scaleX, y: c.y * scaleY }));
-
-      if (typeof cv !== 'undefined' && cv.Mat) {
-        const src = cv.imread(fullCanvas);
-        const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
-          scaled[0].x, scaled[0].y, scaled[1].x, scaled[1].y,
-          scaled[2].x, scaled[2].y, scaled[3].x, scaled[3].y,
-        ]);
-        const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
-          0, 0, WARP_SIZE, 0, 0, WARP_SIZE, WARP_SIZE, WARP_SIZE,
-        ]);
-        const M = cv.getPerspectiveTransform(srcTri, dstTri);
-        const dst = new cv.Mat();
-        cv.warpPerspective(src, dst, M, new cv.Size(WARP_SIZE, WARP_SIZE));
-        cv.imshow(canvas, dst);
-        src.delete(); srcTri.delete(); dstTri.delete(); M.delete(); dst.delete();
-      }
-    }
-  }
-
-  function startSearch(onFrame, onStateChange) {
-    onFrameCb = onFrame; onStateCb = onStateChange;
-    detectedTargets = {}; stableCount = 0; lastCorners = {};
-    setState('SEARCHING');
-    if (rafId) cancelAnimationFrame(rafId);
-    frameLoop();
-  }
-
-  function setActiveTarget(tNum) { activeTarget = tNum; }
-  function getActiveTarget() { return activeTarget; }
-  function getDetectedTargets() { return detectedTargets; }
-  function getWarpCanvas(tNum) { return warpCanvases[tNum] || null; }
 
   function relock() {
-    detectedTargets = {}; stableCount = 0; lastCorners = {};
+    tracks = {}; prevCentroids = {}; lockProgress = 0;
+    Laser.reset();
+    state = 'IDLE';
     setState('SEARCHING');
+  }
+
+  function loop() {
+    rafId = requestAnimationFrame(loop);
+    if (!videoEl || videoEl.readyState < 2) return;
+    const w = videoEl.videoWidth, h = videoEl.videoHeight;
+    if (!w || !h) return;
+    frameNo++;
+    const now = performance.now();
+    if (lastLoopAt) fps = fps * 0.9 + (1000 / Math.max(1, now - lastLoopAt)) * 0.1;
+    lastLoopAt = now;
+    if (frameCanvas.width !== w || frameCanvas.height !== h) { frameCanvas.width = w; frameCanvas.height = h; }
+    frameCtx.drawImage(videoEl, 0, 0, w, h);
+    const src = cv.imread(frameCanvas);
+    try {
+      if (state !== 'LOCKED' || frameNo % LOCKED_DETECT_EVERY === 0) detectMarkers(src, w, h);
+      if (state === 'SEARCHING') updateLock();
+      if (state === 'LOCKED') processLasers(src);
+    } finally {
+      src.delete();
+    }
+    if (cbs.onFrame) cbs.onFrame(frameInfo(w, h));
+  }
+
+  function detectMarkers(src, w, h) {
+    const dw = DETECT_W, dh = Math.round(h * dw / w);
+    const small = new cv.Mat();
+    cv.resize(src, small, new cv.Size(dw, dh), 0, 0, cv.INTER_AREA);
+    const markers = ArucoDetect.detect(small.data, dw, dh);
+    small.delete();
+    markerCount = markers.length;
+    const s = w / dw;
+    const groups = ArucoDetect.groupByTarget(markers);
+
+    for (let t = 1; t <= TARGETS_MAX; t++) {
+      const g = groups[t];
+      const tr = tracks[t] || (tracks[t] = { corners: {}, seen: [], H: null, Hinv: null });
+      tr.seen = g ? Object.keys(g).map(Number) : [];
+      if (!g) continue;
+      for (const k of tr.seen) {
+        const fresh = g[k].map(p => ({ x: p.x * s, y: p.y * s }));
+        const old = tr.corners[k];
+        tr.corners[k] = old ? fresh.map((p, i) => {
+          const q = old[i];
+          return Math.hypot(p.x - q.x, p.y - q.y) < SMOOTH_SNAP ? { x: q.x * 0.7 + p.x * 0.3, y: q.y * 0.7 + p.y * 0.3 } : p;
+        }) : fresh;
+      }
+      if (tr.seen.length >= TRACK_MIN_MARKERS) updateHomography(tr);
+    }
+  }
+
+  function updateHomography(tr) {
+    const srcPts = [], dstPts = [];
+    for (const k of tr.seen) {
+      const mm = markerCornersMM(k);
+      tr.corners[k].forEach((p, i) => {
+        srcPts.push(p.x, p.y);
+        dstPts.push(mm[i].x * WARP_SCALE, mm[i].y * WARP_SCALE);
+      });
+    }
+    const n = srcPts.length / 2;
+    const sM = cv.matFromArray(n, 1, cv.CV_32FC2, srcPts);
+    const dM = cv.matFromArray(n, 1, cv.CV_32FC2, dstPts);
+    const Hm = cv.findHomography(sM, dM);
+    sM.delete(); dM.delete();
+    if (Hm.rows === 3 && Hm.cols === 3) {
+      const H = Array.from(Hm.data64F);
+      const Hinv = invert3(H);
+      if (H.every(Number.isFinite) && Hinv) { tr.H = H; tr.Hinv = Hinv; }
+    }
+    Hm.delete();
+  }
+
+  function invert3(m) {
+    const [a, b, c, d, e, f, g, h, i] = m;
+    const A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g;
+    const det = a * A + b * B + c * C;
+    if (Math.abs(det) < 1e-12) return null;
+    return [A / det, -(b * i - c * h) / det, (b * f - c * e) / det,
+      B / det, (a * i - c * g) / det, -(a * f - c * d) / det,
+      C / det, -(a * h - b * g) / det, (a * e - b * d) / det];
+  }
+
+  function apply(H, x, y) {
+    const z = H[6] * x + H[7] * y + H[8];
+    return { x: (H[0] * x + H[1] * y + H[2]) / z, y: (H[3] * x + H[4] * y + H[5]) / z };
+  }
+
+  // page mm → full-res frame px
+  function mmToFrame(t, x, y) {
+    const tr = tracks[t];
+    if (!tr || !tr.Hinv) return null;
+    return apply(tr.Hinv, x * WARP_SCALE, y * WARP_SCALE);
+  }
+
+  function updateLock() {
+    const ok = required.every(t => tracks[t] && tracks[t].seen.length >= LOCK_MIN_MARKERS && tracks[t].H);
+    if (!ok) { lockProgress = 0; prevCentroids = {}; return; }
+    const centers = {};
+    let stable = true;
+    for (const t of required) {
+      centers[t] = mmToFrame(t, PAGE_W / 2, PAGE_H / 2);
+      const p = prevCentroids[t];
+      if (!p || Math.hypot(p.x - centers[t].x, p.y - centers[t].y) > LOCK_JITTER) stable = false;
+    }
+    prevCentroids = centers;
+    lockProgress = stable ? lockProgress + 1 : 1;
+    if (lockProgress >= LOCK_FRAMES) setState('LOCKED');
+  }
+
+  // Page bounding box in frame px. Kept fixed until the target really moves,
+  // because the laser background model is tied to the ROI's exact size.
+  function updateRoi(tr, w, h) {
+    const pts = [[0, 0], [PAGE_W, 0], [PAGE_W, PAGE_H], [0, PAGE_H]].map(([x, y]) => apply(tr.Hinv, x * WARP_SCALE, y * WARP_SCALE));
+    const x0 = Math.max(0, Math.floor(Math.min(...pts.map(p => p.x)))), y0 = Math.max(0, Math.floor(Math.min(...pts.map(p => p.y))));
+    const x1 = Math.min(w, Math.ceil(Math.max(...pts.map(p => p.x)))), y1 = Math.min(h, Math.ceil(Math.max(...pts.map(p => p.y))));
+    if (x1 - x0 < 20 || y1 - y0 < 20) return;
+    const r = tr.roi;
+    if (r && Math.abs(r.x - x0) < ROI_SLACK && Math.abs(r.y - y0) < ROI_SLACK && Math.abs(r.x + r.width - x1) < ROI_SLACK && Math.abs(r.y + r.height - y1) < ROI_SLACK) return;
+    tr.roi = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+  }
+
+  function processLasers(src) {
+    let hit = null;
+    for (const t of required) {
+      const tr = tracks[t];
+      if (!tr || !tr.H) continue;
+      updateRoi(tr, src.cols, src.rows);
+      if (!tr.roi) continue;
+      const view = src.roi(new cv.Rect(tr.roi.x, tr.roi.y, tr.roi.width, tr.roi.height));
+      const d = Laser.detect(view, laserColor, t);
+      view.delete();
+      if (!d) continue;
+      const p = apply(tr.H, d.x + tr.roi.x, d.y + tr.roi.y);
+      const x = p.x / WARP_SCALE, y = p.y / WARP_SCALE;
+      if (x < 0 || y < 0 || x > PAGE_W || y > PAGE_H || Zones.inMarkerArea(x, y)) continue;
+      hit = { target: t, x, y };
+      break;
+    }
+
+    if (!hit) {
+      if (++laserGap >= SHOT_GAP_FRAMES) laserOn = false;
+      return;
+    }
+    laserGap = 0;
+    if (laserOn) return;
+    laserOn = true;
+    const now = performance.now();
+    if (now - lastShotAt < SHOT_MIN_INTERVAL) return;
+    lastShotAt = now;
+    hit.at = now;
+    if (typeof AppLog !== 'undefined') AppLog.add('SHOT', `B${hit.target} (${hit.x.toFixed(0)},${hit.y.toFixed(0)})mm`);
+    if (cbs.onShot) cbs.onShot(hit);
+  }
+
+  function frameInfo(w, h) {
+    const targets = {};
+    for (const t of required) {
+      const tr = tracks[t];
+      const c = tr && tr.Hinv ? mmToFrame(t, PAGE_W / 2, PAGE_H / 2) : null;
+      targets[t] = { markers: tr ? tr.seen.length : 0, fx: c ? c.x / w : null, fy: c ? c.y / h : null };
+    }
+    return { state, targets, progress: Math.min(1, lockProgress / LOCK_FRAMES), markerCount, fps, frameW: w, frameH: h };
   }
 
   return {
-    start, stop, startSearch, relock,
-    setActiveTarget, getActiveTarget, getDetectedTargets, getWarpCanvas,
+    ready, start, stop, track, relock, isRunning, mmToFrame,
     get state() { return state; },
-    get previewCanvas() { return searchCanvas; },
   };
 })();

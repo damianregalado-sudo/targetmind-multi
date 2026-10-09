@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0a0a0a">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <title>TargetMind Multi</title>
@@ -14,9 +14,7 @@
 
   <header class="header">
     <h1>⊕ TARGETMIND MULTI</h1>
-    <div>
-      <span class="pill" id="buildBadge">build 2026-10-05.01</span>
-    </div>
+    <span class="pill" id="buildBadge">build 2026-10-09.02</span>
   </header>
 
   <nav class="nav">
@@ -27,15 +25,12 @@
 
   <main>
     <div id="tab-targets" class="tab-panel">
-      <div style="margin-bottom:12px">
-        <p style="font-size:13px;color:var(--muted)">Seleccioná 2 o más blancos, imprimilos y pegalos en la pared. La app detecta los marcadores ArUco de cada blanco automáticamente.</p>
-      </div>
+      <p class="muted-sm">Elegí los blancos, imprimilos en A4 al 100% y pegalos separados en la pared. Cada blanco se reconoce por sus 4 marcadores negros de las esquinas: no los tapes ni los recortes.</p>
       <div id="targetCards"></div>
-      <div style="margin-top:16px">
-        <button class="btn btn-primary btn-lg" id="startDrillBtn" onclick="App.setTab('drill')">CONFIGURAR DRILL →</button>
-      </div>
+      <p id="selectionHint" class="muted-sm"></p>
+      <button class="btn btn-primary btn-lg" id="startDrillBtn" onclick="App.setTab('drill')">CONFIGURAR DRILL →</button>
       <div style="margin-top:12px;text-align:center">
-        <button class="btn btn-ghost btn-sm" onclick="TargetDesign.downloadAll()">⬇ Descargar todos los blancos</button>
+        <button class="btn btn-ghost btn-sm" onclick="TargetDesign.printTargets([1,2,3,4])">🖨 Imprimir los 4 blancos</button>
       </div>
     </div>
 
@@ -45,15 +40,20 @@
 
   <script src="vendor/aruco-cv.js"></script>
   <script src="vendor/aruco.js"></script>
+  <script src="vendor/dictionaries/apriltag_16h5.js"></script>
   <script src="js/utils.js"></script>
   <script src="js/constants.js"></script>
+  <script src="js/zones.js"></script>
   <script src="js/target-design.js"></script>
   <script src="js/aruco-detect.js"></script>
   <script src="js/laser.js"></script>
   <script src="js/vision-multi.js"></script>
   <script src="js/drill-multi.js"></script>
   <script src="js/app.js"></script>
-  <script async src="vendor/opencv.js" onload="window.__onOpenCvReady && window.__onOpenCvReady()"></script>
+  <script async src="vendor/opencv.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  </script>
 
 </body>
 </html>
