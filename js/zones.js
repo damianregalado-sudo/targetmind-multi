@@ -47,7 +47,7 @@ const Zones = (() => {
     switch (z.shape) {
       case 'rect': return { x: z.x + z.w / 2, y: z.y + 5 };
       case 'circle': return { x: z.cx, y: z.cy - z.r + 5 };
-      case 'ellipse': return { x: z.cx, y: z.cy };
+      case 'ellipse': return { x: z.cx, y: z.cy - z.ry + 5 };
       case 'poly': {
         const ys = z.pts.map(p => p[1]);
         return { x: z.pts.reduce((s, p) => s + p[0], 0) / z.pts.length, y: Math.max(...ys) - 4 };

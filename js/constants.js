@@ -49,10 +49,21 @@ const IPSC_ZONES = [
 
 // Zones are tested in array order; the first one containing the hit wins, so
 // list inner/frontmost zones first.
+// Photo-art target: zones placed on the figure's anatomy (boxes measured on the
+// art with Gemini, then converted to page mm for the art's placement below).
+const PHOTO_PISTOL_D = [[77, 49], [109, 49], [111, 86], [124, 82], [147, 83], [147, 116], [139, 128], [139, 186], [66, 186], [58, 128], [58, 96], [76, 88]];
 const TARGET_TYPES = {
   1: {
     name: 'Atacante con pistola', color: '#e53935', noShoot: false,
-    figure: 'pistol', zones: IPSC_ZONES,
+    figure: 'pistol',
+    art: { src: 'art/ipsc-pistol.jpg', x: 46.2, y: 40, w: 117.7, h: 193 },
+    zones: [
+      { label: 'A', points: 5, shape: 'ellipse', cx: 94.2, cy: 77.4, rx: 11.7, ry: 13.3 },
+      { label: 'A', points: 5, shape: 'rect', x: 79.9, y: 99.4, w: 42.8, h: 45 },
+      { label: 'C', points: 3, shape: 'ellipse', cx: 92.4, cy: 73.8, rx: 15.3, ry: 23.8 },
+      { label: 'C', points: 3, shape: 'rect', x: 67.3, y: 88.2, w: 70.6, h: 96.5 },
+      { label: 'D', points: 1, shape: 'poly', pts: PHOTO_PISTOL_D },
+    ],
   },
   2: {
     name: 'Atacante con cuchillo', color: '#e53935', noShoot: false,

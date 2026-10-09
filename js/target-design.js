@@ -42,16 +42,24 @@ const TargetDesign = (() => {
       <circle cx="70" cy="70" r="6" fill="#dcedc8" stroke="#2e7d32" stroke-width="0.8"/><circle cx="140" cy="70" r="6" fill="#dcedc8" stroke="#2e7d32" stroke-width="0.8"/>`,
   };
 
+  // On photo art the zones get a light halo so they read on any tone; on vector
+  // figures D is the silhouette itself, so it isn't outlined again.
   function zonesSVG(def) {
+    const onPhoto = !!def.art;
     let svg = '';
     for (const z of def.zones) {
       if (z.penalty) continue;
-      if (z.label === 'D') continue;
-      svg += Zones.zoneSVG(z, '#6d4c41', 0.5, '2,1.2');
+      if (z.label === 'D' && !onPhoto) continue;
+      if (onPhoto) svg += Zones.zoneSVG(z, '#ffffff', 1, null).replace('/>', ' opacity="0.55"/>');
+      svg += Zones.zoneSVG(z, onPhoto ? '#222' : '#6d4c41', 0.45, '2,1.2');
       const p = Zones.labelPos(z);
-      svg += `<text x="${p.x}" y="${p.y}" text-anchor="middle" font-family="Arial,sans-serif" font-size="4.5" font-weight="bold" fill="#6d4c41" opacity="0.8">${z.label}</text>`;
+      svg += `<text x="${p.x}" y="${p.y}" text-anchor="middle" font-family="Arial,sans-serif" font-size="4.5" font-weight="bold" fill="${onPhoto ? '#222' : '#6d4c41'}" stroke="${onPhoto ? '#fff' : 'none'}" stroke-width="0.6" paint-order="stroke" opacity="0.85">${z.label}</text>`;
     }
     return svg;
+  }
+
+  function artHref(src) {
+    return new URL(src, document.baseURI).href;
   }
 
   // opts.art: { href, x, y, w, h } — optional background artwork (mm). Markers
@@ -62,7 +70,7 @@ const TargetDesign = (() => {
     let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${PAGE_W} ${PAGE_H}" width="${PAGE_W}mm" height="${PAGE_H}mm">`;
     svg += `<rect width="${PAGE_W}" height="${PAGE_H}" fill="white"/>`;
     const art = opts.art || def.art;
-    if (art) svg += `<image href="${art.href}" x="${art.x}" y="${art.y}" width="${art.w}" height="${art.h}" preserveAspectRatio="xMidYMid slice"/>`;
+    if (art) svg += `<image href="${art.href || artHref(art.src)}" x="${art.x}" y="${art.y}" width="${art.w}" height="${art.h}" preserveAspectRatio="xMidYMid slice"/>`;
     else svg += FIGURES[def.figure]();
     svg += zonesSVG(def);
     for (let k = 0; k < 4; k++) {
