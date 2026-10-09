@@ -53,14 +53,63 @@ const VisionMulti = (() => {
     });
   }
 
-  async function start(video) {
-    videoEl = video;
-    stream = await navigator.mediaDevices.getUserMedia({
+  function openStream() {
+    return navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
       audio: false,
     });
+  }
+
+  function watchTrack() {
+    const t = stream && stream.getVideoTracks()[0];
+    if (t) t.addEventListener('ended', () => {
+      log('CAM', 'la cámara se cortó (pantalla bloqueada / otra app)');
+      if (document.visibilityState === 'visible') ensureLive();
+    });
+  }
+
+  // Mobile browsers end or pause the camera when the app goes to the
+  // background; bring it back instead of tracking a frozen feed.
+  let reviving = null;
+  function ensureLive() {
+    if (!videoEl || !stream) return Promise.resolve();
+    if (reviving) return reviving;
+    const p = (async () => {
+      try {
+        const t = stream.getVideoTracks()[0];
+        if (!t || t.readyState === 'ended') {
+          stream.getTracks().forEach(x => x.stop());
+          stream = await openStream();
+          videoEl.srcObject = stream;
+          watchTrack();
+          Laser.reset();
+          log('CAM', 'cámara reactivada');
+        }
+        if (videoEl.paused) await videoEl.play();
+        if (rafId) { cancelSchedule(); schedule(); }
+      } catch (e) {
+        log('CAM', 'no se pudo reactivar la cámara: ' + e.message);
+      }
+    })();
+    // cleared after assignment: with nothing to revive the async body ends
+    // synchronously, and clearing inside it would leave `reviving` stuck
+    reviving = p;
+    p.then(() => { if (reviving === p) reviving = null; });
+    return p;
+  }
+
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && stream) ensureLive();
+    });
+  }
+
+  async function start(video) {
+    videoEl = video;
+    stream = await openStream();
     video.srcObject = stream;
     await video.play();
+    watchTrack();
     frameCanvas = document.createElement('canvas');
     frameCtx = frameCanvas.getContext('2d', { willReadFrequently: true });
     if (typeof AppLog !== 'undefined') AppLog.add('CAM', `Cámara ${video.videoWidth}x${video.videoHeight}`);
