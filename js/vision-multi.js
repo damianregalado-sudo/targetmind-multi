@@ -7,19 +7,22 @@ const VisionMulti = (() => {
   const SMOOTH_SNAP = 3;
   const SHOT_GAP_FRAMES = 2;
   const SHOT_MIN_INTERVAL = 150;
-  const LOCKED_DETECT_EVERY = 4;
+  // Re-find the corner tags ~twice a second once locked; marker detection is
+  // the most expensive step and a fixed phone doesn't need it more often.
+  const LOCKED_DETECT_EVERY = 15;
   const ROI_SLACK = 6;
 
   let stream = null, videoEl = null, rafId = null;
   let state = 'IDLE';
-  let frameCanvas = null, frameCtx = null;
+  let frameCanvas = null, frameCtx = null, cropCanvas = null, cropCtx = null, detectCanvas = null, detectCtx = null;
+  let markerWorker = null, workerBusy = false, workerSeq = 0, workerScale = 1;
   let required = [], laserColor = 'red';
   let cbs = {};
   let tracks = {};
   let lockProgress = 0, prevCentroids = {};
-  let frameNo = 0, markerCount = 0, fps = 0, lastLoopAt = 0;
+  let frameNo = 0, markerCount = 0, fps = 0, lastLoopAt = 0, procMs = 0;
   let laserState = {}, lastShotAt = 0;
-  let diag = { shake: 0, tooBig: 0, lastLogAt: 0 };
+  let diag = { shake: 0, tooBig: 0, lastLogAt: 0, lastPerfAt: 0 };
   let shakeRate = 0;
 
   // One callback per decoded camera frame when supported: no duplicate work
@@ -112,11 +115,18 @@ const VisionMulti = (() => {
     watchTrack();
     frameCanvas = document.createElement('canvas');
     frameCtx = frameCanvas.getContext('2d', { willReadFrequently: true });
+    cropCanvas = document.createElement('canvas');
+    cropCtx = cropCanvas.getContext('2d', { willReadFrequently: true });
+    detectCanvas = document.createElement('canvas');
+    detectCtx = detectCanvas.getContext('2d', { willReadFrequently: true });
+    startWorker();
     if (typeof AppLog !== 'undefined') AppLog.add('CAM', `Cámara ${video.videoWidth}x${video.videoHeight}`);
   }
 
   function stop() {
     cancelSchedule();
+    if (markerWorker) { markerWorker.terminate(); markerWorker = null; }
+    workerBusy = false;
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     if (videoEl) videoEl.srcObject = null;
     tracks = {}; prevCentroids = {}; lockProgress = 0;
@@ -138,6 +148,7 @@ const VisionMulti = (() => {
   function relock() {
     tracks = {}; prevCentroids = {}; lockProgress = 0;
     laserState = {}; shakeRate = 0;
+    workerSeq++; workerBusy = false;
     Laser.reset();
     state = 'IDLE';
     setState('SEARCHING');
@@ -152,16 +163,29 @@ const VisionMulti = (() => {
     const now = performance.now();
     if (lastLoopAt) fps = fps * 0.9 + (1000 / Math.max(1, now - lastLoopAt)) * 0.1;
     lastLoopAt = now;
-    if (frameCanvas.width !== w || frameCanvas.height !== h) { frameCanvas.width = w; frameCanvas.height = h; }
-    frameCtx.drawImage(videoEl, 0, 0, w, h);
-    const src = cv.imread(frameCanvas);
-    try {
-      if (state !== 'LOCKED' || frameNo % LOCKED_DETECT_EVERY === 0) detectMarkers(src, w, h);
-      if (state === 'SEARCHING') updateLock();
-      if (state === 'LOCKED') processLasers(src);
-    } finally {
-      src.delete();
+    if (state !== 'LOCKED') {
+      if (frameCanvas.width !== w || frameCanvas.height !== h) { frameCanvas.width = w; frameCanvas.height = h; }
+      frameCtx.drawImage(videoEl, 0, 0, w, h);
+      const src = cv.imread(frameCanvas);
+      try {
+        detectMarkers(src, w, h);
+        updateLock();
+      } finally {
+        src.delete();
+      }
+    } else {
+      if (frameNo % LOCKED_DETECT_EVERY === 0) requestMarkers(w, h);
+      // Read only the strip that holds the targets — typically a fraction
+      // of the frame — so every camera frame gets checked for a dot.
+      const r = refreshRois(w, h);
+      if (r) {
+        if (cropCanvas.width !== r.width || cropCanvas.height !== r.height) { cropCanvas.width = r.width; cropCanvas.height = r.height; }
+        cropCtx.drawImage(videoEl, r.x, r.y, r.width, r.height, 0, 0, r.width, r.height);
+        const src = cv.imread(cropCanvas);
+        try { processLasers(src, r.x, r.y); } finally { src.delete(); }
+      }
     }
+    procMs = procMs * 0.9 + (performance.now() - now) * 0.1;
     if (cbs.onFrame) cbs.onFrame(frameInfo(w, h));
   }
 
@@ -171,8 +195,44 @@ const VisionMulti = (() => {
     cv.resize(src, small, new cv.Size(dw, dh), 0, 0, cv.INTER_AREA);
     const markers = ArucoDetect.detect(small.data, dw, dh);
     small.delete();
+    applyMarkers(markers, w / dw);
+  }
+
+  // While locked, tag re-checks run in a worker so they never stall laser
+  // detection; falls back to the main thread if workers are unavailable.
+  function requestMarkers(w, h) {
+    const dw = DETECT_W, dh = Math.round(h * dw / w);
+    if (!markerWorker) {
+      if (frameCanvas.width !== w || frameCanvas.height !== h) { frameCanvas.width = w; frameCanvas.height = h; }
+      frameCtx.drawImage(videoEl, 0, 0, w, h);
+      const src = cv.imread(frameCanvas);
+      try { detectMarkers(src, w, h); } finally { src.delete(); }
+      return;
+    }
+    if (workerBusy) return;
+    if (detectCanvas.width !== dw || detectCanvas.height !== dh) { detectCanvas.width = dw; detectCanvas.height = dh; }
+    detectCtx.drawImage(videoEl, 0, 0, dw, dh);
+    const img = detectCtx.getImageData(0, 0, dw, dh);
+    workerBusy = true;
+    workerScale = w / dw;
+    markerWorker.postMessage({ seq: workerSeq, width: dw, height: dh, buffer: img.data.buffer, dict: MARKER_DICT, maxHamming: MARKER_MAX_HAMMING }, [img.data.buffer]);
+  }
+
+  function startWorker() {
+    try {
+      markerWorker = new Worker('js/marker-worker.js');
+      markerWorker.onmessage = (e) => {
+        workerBusy = false;
+        if (e.data.seq === workerSeq && state === 'LOCKED') applyMarkers(e.data.markers, workerScale);
+      };
+      markerWorker.onerror = () => { log('VISION', 'worker de marcadores no disponible, uso el hilo principal'); markerWorker = null; workerBusy = false; };
+    } catch (e) {
+      markerWorker = null;
+    }
+  }
+
+  function applyMarkers(markers, s) {
     markerCount = markers.length;
-    const s = w / dw;
     const groups = ArucoDetect.groupByTarget(markers);
 
     for (let t = 1; t <= TARGETS_MAX; t++) {
@@ -263,19 +323,33 @@ const VisionMulti = (() => {
     tr.roi = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
   }
 
+  // Updates every target's ROI and returns their union (frame px), or null.
+  function refreshRois(w, h) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const t of required) {
+      const tr = tracks[t];
+      if (!tr || !tr.H) continue;
+      updateRoi(tr, w, h);
+      const r = tr.roi;
+      if (!r) continue;
+      x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y);
+      x1 = Math.max(x1, r.x + r.width); y1 = Math.max(y1, r.y + r.height);
+    }
+    return x1 > x0 ? { x: x0, y: y0, width: x1 - x0, height: y1 - y0 } : null;
+  }
+
   // Edge-triggered per target: a dot fires once when it appears, then that
   // target re-arms after a few dot-free frames. Per target so a stuck blob on
   // one sheet can never block shots on the others.
-  function processLasers(src) {
+  // src covers the frame from (ox, oy); ROIs are in full-frame px.
+  function processLasers(src, ox, oy) {
     const now = performance.now();
     let shookThisFrame = false;
     for (const t of required) {
       const tr = tracks[t];
-      if (!tr || !tr.H) continue;
-      updateRoi(tr, src.cols, src.rows);
-      if (!tr.roi) continue;
+      if (!tr || !tr.H || !tr.roi) continue;
       const ls = laserState[t] || (laserState[t] = { on: false, gap: 0 });
-      const view = src.roi(new cv.Rect(tr.roi.x, tr.roi.y, tr.roi.width, tr.roi.height));
+      const view = src.roi(new cv.Rect(tr.roi.x - ox, tr.roi.y - oy, tr.roi.width, tr.roi.height));
       const dots = Laser.detect(view, laserColor, t);
       view.delete();
       const info = Laser.last;
@@ -302,6 +376,10 @@ const VisionMulti = (() => {
       if (cbs.onShot) cbs.onShot(hit);
     }
     shakeRate = shakeRate * 0.95 + (shookThisFrame ? 0.05 : 0);
+    if (now - diag.lastPerfAt > 5000) {
+      log('PERF', `${Math.round(fps)} imágenes/s · ${procMs.toFixed(0)} ms de proceso por imagen`);
+      diag.lastPerfAt = now;
+    }
     if (now - diag.lastLogAt > 2000 && (diag.shake || diag.tooBig)) {
       log('LASER', `últimos 2s: ${diag.shake} frames con movimiento de cámara, ${diag.tooBig} manchas grandes descartadas · fps ${Math.round(fps)}`);
       diag.shake = 0; diag.tooBig = 0; diag.lastLogAt = now;
@@ -317,7 +395,7 @@ const VisionMulti = (() => {
       const c = tr && tr.Hinv ? mmToFrame(t, PAGE_W / 2, PAGE_H / 2) : null;
       targets[t] = { markers: tr ? tr.seen.length : 0, fx: c ? c.x / w : null, fy: c ? c.y / h : null };
     }
-    return { state, targets, progress: Math.min(1, lockProgress / LOCK_FRAMES), markerCount, fps, unstable: shakeRate > 0.3, frameW: w, frameH: h };
+    return { state, targets, progress: Math.min(1, lockProgress / LOCK_FRAMES), markerCount, fps, procMs, unstable: shakeRate > 0.3, frameW: w, frameH: h };
   }
 
   return {

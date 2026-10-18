@@ -24,12 +24,30 @@ const Laser = (() => {
   const SHAKE_FRAC = 0.015;
   const SHAKE_BG_RATE = 0.5;
 
+  // The ±3px max/min envelopes only move as fast as the background learns,
+  // so they're rebuilt every few frames instead of every frame (they were the
+  // most expensive part, and on a phone every saved ms is a frame not skipped).
+  const ENVELOPE_EVERY = 6;
+
   const bgs = new Map();
   let last = {};
 
+  function freeEnvelope(b) {
+    if (b.grayMax) { b.grayMax.delete(); b.grayMin.delete(); b.chromaMax.delete(); }
+    b.grayMax = b.grayMin = b.chromaMax = null;
+  }
+
   function reset() {
-    bgs.forEach(b => { b.gray.delete(); b.chroma.delete(); });
+    bgs.forEach(b => { freeEnvelope(b); b.gray.delete(); b.chroma.delete(); });
     bgs.clear();
+  }
+
+  function refreshEnvelope(b) {
+    freeEnvelope(b);
+    b.grayMax = neighbourhood(b.gray, 'max');
+    b.grayMin = neighbourhood(b.gray, 'min');
+    b.chromaMax = neighbourhood(b.chroma, 'max');
+    b.age = 0;
   }
 
   function neighbourhood(bg, op) {
@@ -53,6 +71,15 @@ const Laser = (() => {
     cv.addWeighted(bg.chroma, 1 - rate, chroma, rate, 0, bg.chroma);
   }
 
+  // Blending is the costliest op per frame, so the steady-state background
+  // learns every LEARN_EVERY frames at the equivalent compounded rate.
+  const LEARN_EVERY = 3;
+  const LEARN_RATE = 1 - Math.pow(1 - BG_RATE, LEARN_EVERY);
+  function learnSlowly(bg, gray, chroma) {
+    if (++bg.learnTick % LEARN_EVERY) return;
+    learn(bg, gray, chroma, LEARN_RATE);
+  }
+
   // rgbaMat: camera region covering one target; key: that target's background.
   // Returns candidate dots [{x, y, area}] in rgbaMat px, largest first (empty
   // when nothing qualifies). Laser.last explains the outcome.
@@ -72,41 +99,54 @@ const Laser = (() => {
 
     const bg = bgs.get(key);
     if (!bg || bg.gray.rows !== gray.rows || bg.gray.cols !== gray.cols) {
-      if (bg) { bg.gray.delete(); bg.chroma.delete(); }
-      bgs.set(key, { gray, chroma });
+      if (bg) { freeEnvelope(bg); bg.gray.delete(); bg.chroma.delete(); }
+      const fresh = { gray, chroma, age: 0, learnTick: 0 };
+      refreshEnvelope(fresh);
+      bgs.set(key, fresh);
       chans.forEach(m => m.delete());
       last = { status: 'init' };
       return [];
     }
+    if (bg.age++ >= ENVELOPE_EVERY) refreshEnvelope(bg);
+    const area = gray.rows * gray.cols;
 
-    const grayMax = neighbourhood(bg.gray, 'max');
-    const grayMin = neighbourhood(bg.gray, 'min');
-    const lighter = increaseOver(gray, grayMax, SHAKE_DIFF);
-    const darker = increaseOver(grayMin, gray, SHAKE_DIFF);
-    cv.bitwise_or(lighter, darker, lighter);
-    const changedFrac = cv.countNonZero(lighter) / (gray.rows * gray.cols);
-    lighter.delete(); darker.delete(); grayMin.delete();
+    // Shake check: a moved camera lights up (and darkens) edges everywhere.
+    // Darkening is only measured when brightening already looks widespread.
+    const lighter = increaseOver(gray, bg.grayMax, SHAKE_DIFF);
+    let changedFrac = cv.countNonZero(lighter) / area;
+    lighter.delete();
+    if (changedFrac > SHAKE_FRAC / 2) {
+      const darker = increaseOver(bg.grayMin, gray, SHAKE_DIFF);
+      changedFrac += cv.countNonZero(darker) / area;
+      darker.delete();
+    }
     if (changedFrac > SHAKE_FRAC) {
-      grayMax.delete();
       learn(bg, gray, chroma, SHAKE_BG_RATE);
+      refreshEnvelope(bg);
       gray.delete(); chroma.delete(); chans.forEach(m => m.delete());
       last = { status: 'shake', changedFrac };
       return [];
     }
 
-    const mBright = increaseOver(gray, grayMax, BRIGHTEN_MIN);
-    grayMax.delete();
-    const hue = new cv.Mat();
-    cv.threshold(chroma, hue, COLOR_MARGIN, 255, cv.THRESH_BINARY);
-    const hk = cv.Mat.ones(HALO_PX, HALO_PX, cv.CV_8U);
-    cv.dilate(hue, hue, hk);
-    hk.delete();
-    cv.bitwise_and(mBright, hue, mBright);
-    hue.delete();
-
-    const chromaMax = neighbourhood(bg.chroma, 'max');
-    const mChroma = increaseOver(chroma, chromaMax, CHROMA_MIN);
-    chromaMax.delete();
+    const mBright = increaseOver(gray, bg.grayMax, BRIGHTEN_MIN);
+    const mChroma = increaseOver(chroma, bg.chromaMax, CHROMA_MIN);
+    // Fast exit — the common case: nothing got brighter or redder anywhere.
+    if (!cv.countNonZero(mBright) && !cv.countNonZero(mChroma)) {
+      mBright.delete(); mChroma.delete(); chans.forEach(m => m.delete());
+      learnSlowly(bg, gray, chroma);
+      gray.delete(); chroma.delete();
+      last = { status: 'none', changedFrac };
+      return [];
+    }
+    if (cv.countNonZero(mBright)) {
+      const hue = new cv.Mat();
+      cv.threshold(chroma, hue, COLOR_MARGIN, 255, cv.THRESH_BINARY);
+      const hk = cv.Mat.ones(HALO_PX, HALO_PX, cv.CV_8U);
+      cv.dilate(hue, hue, hk);
+      hk.delete();
+      cv.bitwise_and(mBright, hue, mBright);
+      hue.delete();
+    }
     const mask = new cv.Mat();
     cv.bitwise_or(mBright, mChroma, mask);
     mBright.delete(); mChroma.delete();
@@ -135,7 +175,7 @@ const Laser = (() => {
     }
     mask.delete(); contours.delete(); hierarchy.delete();
 
-    learn(bg, gray, chroma, BG_RATE);
+    learnSlowly(bg, gray, chroma);
     gray.delete(); chroma.delete();
     dots.sort((a, b) => b.area - a.area);
     last = dots.length ? { status: 'dot', changedFrac } : { status: rejected ? 'too-big' : 'none', biggest, changedFrac };
