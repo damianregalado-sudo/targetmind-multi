@@ -7,7 +7,7 @@ const Laser = (() => {
   const BRIGHTEN_MIN = 20;    // gray levels above the background's local max
   const CHROMA_MIN = 25;      // (primary − other) increase over the background
   const PRIMARY_MIN = 150;    // laser channel must be bright either way
-  const COLOR_MARGIN = 8;     // brightening branch: hue sanity check
+  const COLOR_MARGIN = 10;    // brightening branch: laser-colour increase needed nearby
   const HALO_PX = 9;          // saturated cores are white; hue lives in the halo
   // Each pixel is compared with the brightest (and darkest) background pixel
   // within ±3px, so a phone trembling on a desk doesn't light up every
@@ -139,13 +139,15 @@ const Laser = (() => {
       return [];
     }
     if (cv.countNonZero(mBright)) {
-      const hue = new cv.Mat();
-      cv.threshold(chroma, hue, COLOR_MARGIN, 255, cv.THRESH_BINARY);
+      // A brightening only counts next to a fresh INCREASE in laser colour
+      // (the dot's halo). Static colour isn't enough: shifted edges of
+      // printed tan/orange areas brighten under tremor but add no new red.
+      const near = increaseOver(chroma, bg.chromaMax, COLOR_MARGIN);
       const hk = cv.Mat.ones(HALO_PX, HALO_PX, cv.CV_8U);
-      cv.dilate(hue, hue, hk);
+      cv.dilate(near, near, hk);
       hk.delete();
-      cv.bitwise_and(mBright, hue, mBright);
-      hue.delete();
+      cv.bitwise_and(mBright, near, mBright);
+      near.delete();
     }
     const mask = new cv.Mat();
     cv.bitwise_or(mBright, mChroma, mask);
