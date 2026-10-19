@@ -5,7 +5,9 @@ const DrillMulti = (() => {
   let cfg = null, seq = [], idx = 0;
   let state = 'IDLE';
   let events = [];
-  let roundStart = 0, roundTimer = null;
+  let roundStart = 0, roundTimer = null, timedOutAt = 0;
+  const DETECTION_GRACE_MS = 400;
+  const LATE_WINDOW_MS = 1500;
   let onUpdate = null;
   const timers = new Set();
 
@@ -54,10 +56,14 @@ const DrillMulti = (() => {
     roundStart = performance.now();
     speak(`¡Blanco ${seq[idx]}!`);
     notify({ type: 'command' });
+    // Shots are timed by camera capture time, but get detected a few tenths
+    // later; wait that long before declaring the round lost so an in-time
+    // shot isn't cut off by processing latency.
     roundTimer = later(() => {
       events.push({ round: idx + 1, target: seq[idx], kind: 'timeout', label: 'SIN IMPACTO', points: 0, time: null });
+      timedOutAt = performance.now();
       endRound({ type: 'timeout' });
-    }, cfg.windowMs);
+    }, cfg.windowMs + DETECTION_GRACE_MS);
   }
 
   function endRound(evt) {
@@ -68,7 +74,8 @@ const DrillMulti = (() => {
     later(nextRound, randDelay());
   }
 
-  // Returns 'early' when a scoring hit landed before the call-out (not counted).
+  // Returns 'early' when a scoring hit landed before the call-out, or 'late'
+  // when it came just after the window closed (neither is counted).
   function registerShot(shot) {
     if (state !== 'AWAIT' && state !== 'BETWEEN' && state !== 'READY') return;
     const def = TARGET_TYPES[shot.target];
@@ -80,6 +87,18 @@ const DrillMulti = (() => {
       events.push({ ...base, kind: 'penalty', label: hit ? hit.label : 'NO DISPARAR', points: PENALTY_POINTS });
       notify({ type: 'penalty' });
       return;
+    }
+    if (state === 'AWAIT' && time > cfg.windowMs) {
+      events.push({ ...base, kind: 'late', label: 'TARDE', points: 0 });
+      endRound({ type: 'late' });
+      return 'late';
+    }
+    // a shot right after a timed-out round is a late shot, not an early one
+    const last = events[events.length - 1];
+    if (state === 'BETWEEN' && last && last.kind === 'timeout' && performance.now() - timedOutAt < LATE_WINDOW_MS) {
+      Object.assign(last, { kind: 'late', label: 'TARDE', time: Math.round(shot.at - roundStart), x: shot.x, y: shot.y });
+      notify({ type: 'late' });
+      return 'late';
     }
     if (state !== 'AWAIT') return 'early';
     if (shot.target !== seq[idx]) {
@@ -123,7 +142,7 @@ const DrillMulti = (() => {
       alphas: hits.filter(e => e.points === 5).length,
       penalties: events.filter(e => e.kind === 'penalty').length,
       wrong: events.filter(e => e.kind === 'wrong').length,
-      misses: events.filter(e => e.kind === 'miss' || e.kind === 'timeout').length,
+      misses: events.filter(e => e.kind === 'miss' || e.kind === 'timeout' || e.kind === 'late').length,
       avgTime: times.length ? times.reduce((a, b) => a + b, 0) / times.length : null,
       bestTime: times.length ? Math.min(...times) : null,
     };

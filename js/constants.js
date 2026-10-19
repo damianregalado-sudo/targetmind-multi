@@ -93,7 +93,7 @@ const TARGET_TYPES = {
 
 const DRILL_DEFAULTS = {
   rounds: 10,
-  windowMs: 3000,
+  windowMs: 4000,
   delayMs: [1200, 3000],
   voiceEnabled: true,
   voiceLang: 'es-AR',

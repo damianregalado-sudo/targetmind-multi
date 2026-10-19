@@ -20,7 +20,7 @@ const VisionMulti = (() => {
   let cbs = {};
   let tracks = {};
   let lockProgress = 0, prevCentroids = {};
-  let frameNo = 0, markerCount = 0, fps = 0, lastLoopAt = 0, procMs = 0;
+  let frameNo = 0, markerCount = 0, fps = 0, lastLoopAt = 0, procMs = 0, frameTime = 0;
   let laserState = {}, lastShotAt = 0;
   let diag = { shake: 0, tooBig: 0, lastLogAt: 0, lastPerfAt: 0 };
   let shakeRate = 0;
@@ -154,13 +154,17 @@ const VisionMulti = (() => {
     setState('SEARCHING');
   }
 
-  function loop() {
+  function loop(ts, metadata) {
     schedule();
     if (!videoEl || videoEl.readyState < 2) return;
     const w = videoEl.videoWidth, h = videoEl.videoHeight;
     if (!w || !h) return;
     frameNo++;
     const now = performance.now();
+    // When the browser tells us when the camera captured this frame, time
+    // shots by that instead of by when we got around to analysing it.
+    const cap = metadata && metadata.captureTime;
+    frameTime = cap && cap <= now && now - cap < 1000 ? cap : now;
     if (lastLoopAt) fps = fps * 0.9 + (1000 / Math.max(1, now - lastLoopAt)) * 0.1;
     lastLoopAt = now;
     if (state !== 'LOCKED') {
@@ -371,7 +375,7 @@ const VisionMulti = (() => {
       ls.on = true;
       if (now - lastShotAt < SHOT_MIN_INTERVAL) continue;
       lastShotAt = now;
-      hit.at = now;
+      hit.at = frameTime;
       log('SHOT', `B${t} (${hit.x.toFixed(0)},${hit.y.toFixed(0)})mm área ${Math.round(hit.area)}px fps ${Math.round(fps)}`);
       if (cbs.onShot) cbs.onShot(hit);
     }

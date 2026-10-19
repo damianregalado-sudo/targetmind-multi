@@ -14,6 +14,7 @@ const App = (() => {
 
   function printSelected(nums) { TargetDesign.printTargets(nums, { showZones }); }
 
+  const secs = ms => `${(ms / 1000).toFixed(2).replace('.', ',')} s`;
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   function init() {
@@ -229,7 +230,9 @@ const App = (() => {
         <div class="drill-target-name" style="color:${def.color}">¡BLANCO ${u.activeTarget}!</div>
         <div class="drill-sub">${esc(def.name)}</div>`;
     } else if (u.type === 'hit') {
-      msg.innerHTML = `<div class="drill-hit">✓ ${esc(last.label)} · ${last.points} pts · ${last.time} ms</div>`;
+      msg.innerHTML = `<div class="drill-hit">✓ ${esc(last.label)} · ${last.points} pts · ${secs(last.time)}</div>`;
+    } else if (u.type === 'late') {
+      msg.innerHTML = `<div class="drill-hit miss">Tarde (${secs(last.time)}) · el límite es ${secs(App._config.windowMs)} · no cuenta</div>`;
     } else if (u.type === 'miss') {
       msg.innerHTML = `<div class="drill-hit miss">Impacto fuera de zona · 0 pts</div>`;
     } else if (u.type === 'timeout') {
@@ -248,20 +251,20 @@ const App = (() => {
     const panel = $('#tab-results');
     const r = lastResults;
     if (!r) { panel.innerHTML = '<p class="muted">No hay resultados aún. Completá un drill primero.</p>'; return; }
-    const kindClass = { penalty: 'penalty', wrong: 'penalty', timeout: 'miss', miss: 'miss', hit: '' };
+    const kindClass = { penalty: 'penalty', wrong: 'penalty', timeout: 'miss', late: 'miss', miss: 'miss', hit: '' };
     panel.innerHTML = `
       <div class="results-summary">
         <h2>Resultado del drill</h2>
         <div class="results-grid">
           <div class="result-card"><div class="result-value">${r.total}</div><div class="result-label">Puntos</div></div>
           <div class="result-card"><div class="result-value">${r.hits}/${r.rounds}</div><div class="result-label">Impactos (${r.alphas} A)</div></div>
-          <div class="result-card"><div class="result-value">${r.avgTime != null ? Math.round(r.avgTime) + 'ms' : '-'}</div><div class="result-label">Reacción prom. (mejor ${r.bestTime != null ? r.bestTime + 'ms' : '-'})</div></div>
+          <div class="result-card"><div class="result-value">${r.avgTime != null ? secs(r.avgTime) : '-'}</div><div class="result-label">Reacción prom. (mejor ${r.bestTime != null ? secs(r.bestTime) : '-'})</div></div>
           <div class="result-card"><div class="result-value">${r.penalties + r.wrong}</div><div class="result-label">Penalidades (${r.penalties} no-disparar, ${r.wrong} equivocado)</div></div>
         </div>
         <table class="results-table">
           <thead><tr><th>#</th><th>Blanco</th><th>Zona</th><th>Pts</th><th>Tiempo</th></tr></thead>
           <tbody>${r.events.map(e => `
-            <tr class="${kindClass[e.kind]}"><td>${e.round}</td><td>${e.target}</td><td>${esc(e.label)}</td><td>${e.points}</td><td>${e.time != null ? e.time + 'ms' : '-'}</td></tr>`).join('')}
+            <tr class="${kindClass[e.kind]}"><td>${e.round}</td><td>${e.target}</td><td>${esc(e.label)}</td><td>${e.points}</td><td>${e.time != null ? secs(e.time) : '-'}</td></tr>`).join('')}
           </tbody>
         </table>
         <button class="btn btn-primary btn-lg" id="againBtn">Nuevo drill</button>
